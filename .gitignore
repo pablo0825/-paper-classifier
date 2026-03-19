@@ -1,0 +1,9 @@
+# 環境變數（含 API Key，不可上傳）
+.env
+
+# 虛擬環境
+venv/
+
+# Python 暫存檔
+__pycache__/
+*.pyc
