@@ -33,12 +33,17 @@ The reviewer shall ensure that "Criteria Met" and "Classification" are consisten
 {text}
 
 [Output Format (strictly follow)]
-Criterion 1: Yes/No
-Criterion 2: Yes/No
-Criterion 3: Yes/No
-Criterion 4: Yes/No
-Criterion 5: Yes/No
-Criterion 6: Yes/No
-Criterion 7: Yes/No
-Criteria Met: X
-Classification: A1/A2/A3
+Output a single JSON object only. Do not include any explanation, markdown formatting, or code block wrapper.
+
+{
+"criteria": {
+"1": true,
+"2": false,
+"3": true,
+"4": true,
+"5": true,
+"6": false,
+"7": true
+},
+"classification": "A2"
+}

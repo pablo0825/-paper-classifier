@@ -1,8 +1,13 @@
 import json
+import os
 import shutil
 from datetime import datetime, date
 from pathlib import Path
 from langgraph.graph import StateGraph, END
+
+# 定價常數（可在 .env 設定 PRICE_INPUT / PRICE_OUTPUT 覆寫，單位：美元 / 百萬 token）
+PRICE_INPUT_PER_M  = float(os.getenv("PRICE_INPUT",  "2.5"))
+PRICE_OUTPUT_PER_M = float(os.getenv("PRICE_OUTPUT", "10.0"))
 
 from agents.extractor import extract
 from agents.classifier import classify
@@ -13,15 +18,30 @@ MAX_RETRIES = 3
 
 
 # ==========================================
+# 共用 Log 寫入工具
+# ==========================================
+def append_log(path: Path, entry: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    today = date.today().strftime("%Y-%m-%d")
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    with open(path, "a", encoding="utf-8") as f:
+        if f"## {today}" not in existing:
+            f.write(f"\n## {today}\n\n")
+        f.write(entry)
+
+
+# ==========================================
 # 重建總表
 # ==========================================
-def rebuild_summaries(output_dir: Path):
-    for classification in ["A1", "A2", "A3"]:
+def rebuild_summaries(output_dir: Path, only: str = None):
+    targets = [only] if only else ["A1", "A2", "A3"]
+    for classification in targets:
         summary_path = output_dir / f"summary_{classification}.md"
         entries = []
         for json_file in sorted((output_dir / classification / "json").glob("*.json")):
-            data = json.loads(json_file.read_text(encoding="utf-8"))
-            entries.append(f"""
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+                entries.append(f"""
 ---
 
 ## {data["title"]}
@@ -29,6 +49,10 @@ def rebuild_summaries(output_dir: Path):
 - **評分依據**：{data["評分依據"]}
 - **主要發現**：{data["主要發現"]}
 """)
+            except Exception as e:
+                print(f"警告：總表重建時跳過 {json_file.name}（{e}）")
+                warnings_path = output_dir.parent / "logs" / "rebuild_warnings.md"
+                append_log(warnings_path, f"- {classification}/json/{json_file.name}（{e}）\n")
         summary_path.write_text("".join(entries), encoding="utf-8")
 
 
@@ -54,6 +78,7 @@ def init_paper(state: PaperState) -> PaperState:
         "retry_count": 0,
         "failed_node": "",
         "error_message": "",
+        "permanent_error": False,
         "paper_input_tokens": 0,
         "paper_output_tokens": 0,
     }
@@ -79,6 +104,48 @@ def make_run_summarizer(llm_invoke):
 
 
 # ==========================================
+# Node：永久性錯誤處理（不重試，直接跳過）
+# ==========================================
+def handle_permanent_error(state: PaperState) -> PaperState:
+    current = state["current_paper"]
+    error_dir = Path(state["error_dir"])
+    pdf_path = Path(state["input_dir"]) / current
+
+    print(f"跳過：{current}（{state['error_message']}）")
+
+    # 先寫入 error_papers.md，確保錯誤一定有記錄
+    error_log = Path(state["error_log"])
+    error_filenames = error_log.parent / "error_filenames.md"
+    append_log(error_log, f"- {current}（{state['error_message']}）\n")
+
+    # 再嘗試搬移 PDF 到 output/error/
+    try:
+        shutil.move(str(pdf_path), str(error_dir / current))
+    except Exception as e:
+        print(f"警告：無法移動 {current} 到 error 資料夾（{e}），PDF 保留在 input/，下次執行將重試")
+        append_log(error_log, f"- {current}（搬移至 error 資料夾失敗：{e}，PDF 保留在 input/）\n")
+        # 搬移失敗：不寫 error_filenames.md，讓下次 scan_papers 繼續掃到重試
+        return {
+            **state,
+            "papers_to_process": state["papers_to_process"][1:],
+            "failed_node": "",
+            "error_message": "",
+            "permanent_error": False,
+        }
+
+    # 搬移成功：寫入 error_filenames.md 排除下次掃描，正式結案
+    append_log(error_filenames, f"- {current}\n")
+    return {
+        **state,
+        "papers_to_process": state["papers_to_process"][1:],
+        "error_count": state["error_count"] + 1,
+        "failed_node": "",
+        "error_message": "",
+        "permanent_error": False,
+    }
+
+
+# ==========================================
 # Node：錯誤處理（重試計數）
 # ==========================================
 def handle_error(state: PaperState) -> PaperState:
@@ -93,20 +160,36 @@ def handle_error(state: PaperState) -> PaperState:
 def write_dead_letter(state: PaperState) -> PaperState:
     work_dir = Path(state["input_dir"]).parent
     dead_letter_path = work_dir / "logs" / "dead_letter.md"
-    dead_letter_path.parent.mkdir(parents=True, exist_ok=True)
-
-    today = date.today().strftime("%Y-%m-%d")
-    existing = dead_letter_path.read_text(encoding="utf-8") if dead_letter_path.exists() else ""
-
-    with open(dead_letter_path, "a", encoding="utf-8") as f:
-        if f"## {today}" not in existing:
-            f.write(f"## {today}\n\n")
-        f.write(f"- thread_id: {state['thread_id']}\n")
-        f.write(f"  failed_node: {state['failed_node']}\n")
-        f.write(f"  reason: {state['error_message']}\n")
-        f.write(f"  retries: {state['retry_count']}\n\n")
+    dead_letter_entry = (
+        f"- thread_id: {state['thread_id']}\n"
+        f"  failed_node: {state['failed_node']}\n"
+        f"  reason: {state['error_message']}\n"
+        f"  retries: {state['retry_count']}\n\n"
+    )
+    append_log(dead_letter_path, dead_letter_entry)
 
     print(f"已記錄至 dead letter：{state['current_paper']}")
+
+    # 寫入 error_papers.md
+    node_descriptions = {
+        "extractor": "PDF 讀取失敗",
+        "classifier": "論文分類失敗",
+        "summarizer": "摘要生成失敗",
+        "save_results": "結果儲存失敗",
+    }
+    node_desc = node_descriptions.get(state["failed_node"], "處理失敗")
+    reason = f"{node_desc}：{state['error_message']}"
+    error_log = Path(state["error_log"])
+    append_log(error_log, f"- {state['current_paper']}（{reason}）\n")
+    append_log(error_log.parent / "error_filenames.md", f"- {state['current_paper']}\n")
+
+    # 嘗試搬移 PDF 至 output/error/
+    pdf_path = Path(state["input_dir"]) / state["current_paper"]
+    error_dir = Path(state["error_dir"])
+    try:
+        shutil.move(str(pdf_path), str(error_dir / state["current_paper"]))
+    except Exception as e:
+        print(f"警告：無法移動 {state['current_paper']} 到 error 資料夾（{e}），PDF 保留在 input/")
 
     remaining = state["papers_to_process"][1:]
     return {
@@ -128,90 +211,167 @@ def save_results(state: PaperState) -> PaperState:
     summary = state["summary"]
 
     title = summary.get("論文標題", current)
-
-    # 清除其他分類資料夾中的同名舊檔案
     stem = Path(current).stem
+    cls_folder = classification if classification in ["A1", "A2", "A3"] else "A3"
+
+    src = input_dir / current
+    dst = output_dir / cls_folder / "pdf" / current
+    md_path = output_dir / cls_folder / "summary" / (stem + ".md")
+    json_path = output_dir / cls_folder / "json" / (stem + ".json")
+
+    md_written = False
+    json_written = False
+    pdf_moved = False
+
+    # 備份現有檔案內容（rerun 同分類時，rollback 可恢復舊資料）
+    try:
+        old_md = md_path.read_text(encoding="utf-8") if md_path.exists() else None
+    except Exception:
+        old_md = None
+    try:
+        old_json = json_path.read_text(encoding="utf-8") if json_path.exists() else None
+    except Exception:
+        old_json = None
+
+    try:
+        # 1. 寫入個別摘要 .md
+        # 跳脫 | 避免破壞 markdown table 格式
+        s = {k: str(v).replace("|", "\\|") for k, v in summary.items()}
+        title_safe = str(title).replace("|", "\\|")
+        md_content = f"""# {title_safe}
+
+| 欄位 | 內容 |
+|------|------|
+| APA7引用 | {s.get("APA7引用", "")} |
+| 分類結果 | {classification} |
+| 評分依據 | {s.get("評分依據", "")} |
+| 研究目的 | {s.get("研究目的", "")} |
+| 研究方法 | {s.get("研究方法", "")} |
+| 研究模型 | {s.get("研究模型", "")} |
+| 主要發現 | {s.get("主要發現", "")} |
+| 研究貢獻 | {s.get("研究貢獻", "")} |
+| 研究限制 | {s.get("研究限制", "")} |
+"""
+        md_path.write_text(md_content, encoding="utf-8")
+        md_written = True
+
+        # 2. 寫入總表重建用的 .json
+        json_data = {
+            "title": title,
+            "評分依據": summary.get("評分依據", ""),
+            "主要發現": summary.get("主要發現", ""),
+        }
+        json_path.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        json_written = True
+
+        # 3. 搬移 PDF
+        shutil.move(str(src), str(dst))
+        pdf_moved = True
+
+        # 4. 更新 processed_papers.md
+        append_log(log_file, f"- {current}\n")
+
+    except FileNotFoundError as e:
+        # PDF 不存在（永久性錯誤，不重試）：rollback 已寫入的檔案
+        if json_written:
+            if old_json is not None:
+                try:
+                    json_path.write_text(old_json, encoding="utf-8")
+                except Exception:
+                    json_path.unlink(missing_ok=True)
+            else:
+                json_path.unlink(missing_ok=True)
+        if md_written:
+            if old_md is not None:
+                try:
+                    md_path.write_text(old_md, encoding="utf-8")
+                except Exception:
+                    md_path.unlink(missing_ok=True)
+            else:
+                md_path.unlink(missing_ok=True)
+        return {
+            **state,
+            "failed_node": "save_results",
+            "error_message": f"儲存時找不到 PDF（{e}）",
+            "permanent_error": True,
+        }
+
+    except Exception as e:
+        # 其他 I/O 錯誤（暫時性，可重試）：rollback 所有已完成步驟
+        if pdf_moved:
+            try:
+                shutil.move(str(dst), str(src))
+            except Exception:
+                pass
+        if json_written:
+            if old_json is not None:
+                try:
+                    json_path.write_text(old_json, encoding="utf-8")
+                except Exception:
+                    json_path.unlink(missing_ok=True)
+            else:
+                json_path.unlink(missing_ok=True)
+        if md_written:
+            if old_md is not None:
+                try:
+                    md_path.write_text(old_md, encoding="utf-8")
+                except Exception:
+                    md_path.unlink(missing_ok=True)
+            else:
+                md_path.unlink(missing_ok=True)
+        return {
+            **state,
+            "failed_node": "save_results",
+            "error_message": str(e),
+            "permanent_error": False,
+        }
+
+    # 成功：清除其他分類資料夾中的同名舊檔案（當前分類已由 write_text 覆蓋）
+    affected_cls = set()
     for cls in ["A1", "A2", "A3"]:
+        if cls == cls_folder:
+            continue
         for old_file in [
             output_dir / cls / "summary" / f"{stem}.md",
             output_dir / cls / "json" / f"{stem}.json",
         ]:
             if old_file.exists():
-                old_file.unlink()
+                try:
+                    old_file.unlink()
+                    affected_cls.add(cls)
+                except Exception as e:
+                    print(f"警告：無法刪除舊檔 {old_file.name}（{e}），繼續執行")
 
-    # 生成個別摘要 .md
-    md_content = f"""# {title}
-
-| 欄位 | 內容 |
-|------|------|
-| APA7引用 | {summary.get("APA7引用", "")} |
-| 分類結果 | {classification} |
-| 評分依據 | {summary.get("評分依據", "")} |
-| 研究目的 | {summary.get("研究目的", "")} |
-| 研究方法 | {summary.get("研究方法", "")} |
-| 研究模型 | {summary.get("研究模型", "")} |
-| 主要發現 | {summary.get("主要發現", "")} |
-| 研究貢獻 | {summary.get("研究貢獻", "")} |
-| 研究限制 | {summary.get("研究限制", "")} |
-"""
-    md_filename = stem + ".md"
-    cls_folder = classification if classification in ["A1", "A2", "A3"] else "A3"
-    md_path = output_dir / cls_folder / "summary" / md_filename
-    md_path.write_text(md_content, encoding="utf-8")
-
-    # 儲存總表重建用的 .json
-    json_filename = stem + ".json"
-    json_path = output_dir / classification / "json" / json_filename
-    json_data = {
-        "title": title,
-        "評分依據": summary.get("評分依據", ""),
-        "主要發現": summary.get("主要發現", ""),
-    }
-    json_path.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # 移動 PDF 到對應資料夾
-    src = input_dir / current
-    dst = output_dir / classification / "pdf" / current
-    try:
-        shutil.move(str(src), str(dst))
-    except FileNotFoundError as e:
-        return {
-            **state,
-            "failed_node": "save_results",
-            "error_message": str(e),
-        }
-
-    # 更新 processed_papers.md
-    if state["processed_count"] == 0:
-        today = date.today().strftime("%Y-%m-%d")
-        existing = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
-    else:
-        today = None
-        existing = ""
-
-    with open(log_file, "a", encoding="utf-8") as f:
-        if today and f"## {today}" not in existing:
-            f.write(f"\n## {today}\n\n")
-        f.write(f"- {current}\n")
-
-    # 從待處理清單移除目前這篇
     remaining = state["papers_to_process"][1:]
     count = state["processed_count"] + 1
 
     paper_input = state["paper_input_tokens"]
     paper_output = state["paper_output_tokens"]
-    cost = (paper_input / 1_000_000 * 2.5) + (paper_output / 1_000_000 * 10.0)
+    cost = (paper_input / 1_000_000 * PRICE_INPUT_PER_M) + (paper_output / 1_000_000 * PRICE_OUTPUT_PER_M)
 
     print(f"已完成：{current}，分類：{classification}")
     print(f"本篇 Token：輸入 {paper_input:,} / 輸出 {paper_output:,} / 費用約 ${cost:.4f}")
 
-    return {**state, "papers_to_process": remaining, "processed_count": count}
+    rebuild_summaries(output_dir, only=cls_folder)
+    for cls in affected_cls:
+        rebuild_summaries(output_dir, only=cls)
+
+    return {
+        **state,
+        "papers_to_process": remaining,
+        "processed_count": count,
+        "failed_node": "",
+        "error_message": "",
+        "permanent_error": False,
+    }
 
 
 # ==========================================
 # 條件判斷
 # ==========================================
 def route_after_agent(state: PaperState) -> str:
+    if state["failed_node"] and state["permanent_error"]:
+        return "handle_permanent_error"
     if state["failed_node"]:
         return "handle_error"
     return "continue"
@@ -229,6 +389,16 @@ def should_continue(state: PaperState) -> str:
     return END
 
 
+def route_after_save(state: PaperState) -> str:
+    if state["permanent_error"]:
+        return "handle_permanent_error"
+    if state["failed_node"]:
+        return "handle_error"
+    if state["papers_to_process"]:
+        return "init_paper"
+    return END
+
+
 # ==========================================
 # 建立 Graph
 # ==========================================
@@ -239,6 +409,7 @@ def build_graph(llm_invoke):
     graph.add_node("run_extractor", run_extractor)
     graph.add_node("run_classifier", make_run_classifier(llm_invoke))
     graph.add_node("run_summarizer", make_run_summarizer(llm_invoke))
+    graph.add_node("handle_permanent_error", handle_permanent_error)
     graph.add_node("handle_error", handle_error)
     graph.add_node("write_dead_letter", write_dead_letter)
     graph.add_node("save_results", save_results)
@@ -248,16 +419,19 @@ def build_graph(llm_invoke):
     graph.add_edge("init_paper", "run_extractor")
 
     graph.add_conditional_edges("run_extractor", route_after_agent, {
+        "handle_permanent_error": "handle_permanent_error",
         "handle_error": "handle_error",
         "continue": "run_classifier",
     })
 
     graph.add_conditional_edges("run_classifier", route_after_agent, {
+        "handle_permanent_error": "handle_permanent_error",
         "handle_error": "handle_error",
         "continue": "run_summarizer",
     })
 
     graph.add_conditional_edges("run_summarizer", route_after_agent, {
+        "handle_permanent_error": "handle_permanent_error",
         "handle_error": "handle_error",
         "continue": "save_results",
     })
@@ -266,7 +440,13 @@ def build_graph(llm_invoke):
         "extractor": "run_extractor",
         "classifier": "run_classifier",
         "summarizer": "run_summarizer",
+        "save_results": "save_results",
         "write_dead_letter": "write_dead_letter",
+    })
+
+    graph.add_conditional_edges("handle_permanent_error", should_continue, {
+        "init_paper": "init_paper",
+        END: END,
     })
 
     graph.add_conditional_edges("write_dead_letter", should_continue, {
@@ -274,7 +454,9 @@ def build_graph(llm_invoke):
         END: END,
     })
 
-    graph.add_conditional_edges("save_results", should_continue, {
+    graph.add_conditional_edges("save_results", route_after_save, {
+        "handle_permanent_error": "handle_permanent_error",
+        "handle_error": "handle_error",
         "init_paper": "init_paper",
         END: END,
     })

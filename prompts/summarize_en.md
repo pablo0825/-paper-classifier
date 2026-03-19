@@ -40,15 +40,19 @@ Note: ✅ and ❌ shall never appear together on the same item.
 3. Before outputting, the summarizer shall verify that the ✅ items in "評分依據" are completely consistent with "Criteria Met". If inconsistent, the summarizer shall correct before outputting.
 
 [Output Format (strictly follow)]
-論文標題: (original title, keep English titles in English)
-APA7引用: (generate full citation in APA 7 format)
-分類結果: {classification}
-評分依據: ✅/❌量化研究方法 ✅/❌研究假設或模型 ✅/❌問卷或測量工具 ✅/❌構面定義 ✅/❌對象樣本及抽樣方式 ✅/❌統計分析 ✅/❌實務或未來建議（若所有標準皆不符合，請填入：無符合標準）
-研究目的: (within 100 characters)
-研究方法: (within 100 characters, describe data collection and analysis methods)
-研究模型: (within 50 characters, describe the theoretical model used; if none, write 「無」)
-主要發現: (within 150 characters)
-研究貢獻: (within 80 characters, describe the new knowledge or findings this study contributes to the field)
-研究限制: (within 80 characters)
+Output a single JSON object only. Do not include any explanation, markdown formatting, or code block wrapper.
 
-Each field must be kept within the specified character limit. If exceeded, condense the content. No field may be omitted.
+{
+  "論文標題": "(original title, keep English titles in English)",
+  "APA7引用": "(generate full citation in APA 7 format)",
+  "分類結果": "{classification}",
+  "評分依據": "✅/❌量化研究方法 ✅/❌研究假設或模型 ✅/❌問卷或測量工具 ✅/❌構面定義 ✅/❌對象樣本及抽樣方式 ✅/❌統計分析 ✅/❌實務或未來建議（若所有標準皆不符合，請填入：無符合標準）",
+  "研究目的": "(within 100 characters)",
+  "研究方法": "(within 100 characters, describe data collection and analysis methods)",
+  "研究模型": "(within 50 characters, describe the theoretical model used; if none, write 「無」)",
+  "主要發現": "(within 150 characters)",
+  "研究貢獻": "(within 80 characters, describe the new knowledge or findings this study contributes to the field)",
+  "研究限制": "(within 80 characters)"
+}
+
+All fields are required. Each field must be kept within the specified character limit.

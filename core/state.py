@@ -34,6 +34,8 @@ class PaperState(TypedDict):
     failed_node: str
     # 失敗原因描述，成功時為空字串
     error_message: str
+    # 是否為永久性錯誤（True = 不重試直接跳過，False = 進重試流程）
+    permanent_error: bool
     # 待處理 PDF 所在資料夾的路徑
     input_dir: str
     # 分類結果輸出資料夾的路徑
