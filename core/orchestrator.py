@@ -16,6 +16,32 @@ from core.state import PaperState
 
 MAX_RETRIES = 3
 
+# 摘要欄位：英文 key（LLM 輸出）→ 中文標籤（顯示給使用者）
+FIELD_LABELS = {
+    "title":          "論文標題",
+    "apa7_citation":  "APA7引用",
+    "classification": "分類結果",
+    "scoring_basis":  "評分依據",
+    "objective":      "研究目的",
+    "method":         "研究方法",
+    "research_model": "研究模型",
+    "findings":       "主要發現",
+    "contribution":   "研究貢獻",
+    "limitations":    "研究限制",
+}
+
+# md 摘要表格的顯示順序（title 作為標題、classification 從 state 取，均不在此列）
+DISPLAY_FIELDS = [
+    "apa7_citation",
+    "scoring_basis",
+    "objective",
+    "method",
+    "research_model",
+    "findings",
+    "contribution",
+    "limitations",
+]
+
 
 # ==========================================
 # 共用 Log 寫入工具
@@ -46,14 +72,17 @@ def rebuild_summaries(output_dir: Path, only: str = None):
 
 ## {data["title"]}
 
-- **評分依據**：{data["評分依據"]}
-- **主要發現**：{data["主要發現"]}
+- **評分依據**：{data["scoring_basis"]}
+- **主要發現**：{data["findings"]}
 """)
             except Exception as e:
                 print(f"警告：總表重建時跳過 {json_file.name}（{e}）")
                 warnings_path = output_dir.parent / "logs" / "rebuild_warnings.md"
                 append_log(warnings_path, f"- {classification}/json/{json_file.name}（{e}）\n")
-        summary_path.write_text("".join(entries), encoding="utf-8")
+        if entries:
+            summary_path.write_text("".join(entries), encoding="utf-8")
+        else:
+            summary_path.unlink(missing_ok=True)
 
 
 # ==========================================
@@ -181,22 +210,46 @@ def write_dead_letter(state: PaperState) -> PaperState:
     reason = f"{node_desc}：{state['error_message']}"
     error_log = Path(state["error_log"])
     append_log(error_log, f"- {state['current_paper']}（{reason}）\n")
-    append_log(error_log.parent / "error_filenames.md", f"- {state['current_paper']}\n")
 
     # 嘗試搬移 PDF 至 output/error/
+    # 搬移成功才寫入 error_filenames.md，確保排除清單與 PDF 實際位置一致
+    # 搬移失敗時不寫 error_filenames.md，PDF 留在 input/，下次 scan_papers 自然撿到重試
     pdf_path = Path(state["input_dir"]) / state["current_paper"]
     error_dir = Path(state["error_dir"])
     try:
         shutil.move(str(pdf_path), str(error_dir / state["current_paper"]))
+        append_log(error_log.parent / "error_filenames.md", f"- {state['current_paper']}\n")
+        moved = True
     except Exception as e:
-        print(f"警告：無法移動 {state['current_paper']} 到 error 資料夾（{e}），PDF 保留在 input/")
+        print(f"警告：無法移動 {state['current_paper']} 到 error 資料夾（{e}），PDF 保留在 input/，下次執行將重試")
+        moved = False
 
     remaining = state["papers_to_process"][1:]
     return {
         **state,
         "papers_to_process": remaining,
-        "error_count": state["error_count"] + 1,
+        "error_count": state["error_count"] + (1 if moved else 0),
     }
+
+
+def _rollback_files(md_path, old_md, md_written, json_path, old_json, json_written):
+    """save_results 失敗時還原或刪除已寫入的 md/json 檔案。"""
+    if json_written:
+        if old_json is not None:
+            try:
+                json_path.write_text(old_json, encoding="utf-8")
+            except Exception:
+                json_path.unlink(missing_ok=True)
+        else:
+            json_path.unlink(missing_ok=True)
+    if md_written:
+        if old_md is not None:
+            try:
+                md_path.write_text(old_md, encoding="utf-8")
+            except Exception:
+                md_path.unlink(missing_ok=True)
+        else:
+            md_path.unlink(missing_ok=True)
 
 
 # ==========================================
@@ -208,9 +261,9 @@ def save_results(state: PaperState) -> PaperState:
     log_file = Path(state["log_file"])
     current = state["current_paper"]
     classification = state["classification"]
-    summary = state["summary"]
-
-    title = summary.get("論文標題", current)
+    # classifier 的分類結果為唯一權威來源，覆蓋 summarizer 可能輸出的不同值
+    summary = {**state["summary"], "classification": classification}
+    title = summary.get("title", current)
     stem = Path(current).stem
     cls_folder = classification if classification in ["A1", "A2", "A3"] else "A3"
 
@@ -234,32 +287,34 @@ def save_results(state: PaperState) -> PaperState:
         old_json = None
 
     try:
+        # 確保目錄存在，避免 write_text 因目錄不存在而丟出 FileNotFoundError
+        # 讓 FileNotFoundError 只剩 shutil.move（PDF 遺失）能觸發，語意精確
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+
         # 1. 寫入個別摘要 .md
         # 跳脫 | 避免破壞 markdown table 格式
         s = {k: str(v).replace("|", "\\|") for k, v in summary.items()}
         title_safe = str(title).replace("|", "\\|")
+        field_rows = "\n".join(
+            f"| {FIELD_LABELS[k]} | {s.get(k, '')} |"
+            for k in DISPLAY_FIELDS
+        )
         md_content = f"""# {title_safe}
 
 | 欄位 | 內容 |
 |------|------|
-| APA7引用 | {s.get("APA7引用", "")} |
 | 分類結果 | {classification} |
-| 評分依據 | {s.get("評分依據", "")} |
-| 研究目的 | {s.get("研究目的", "")} |
-| 研究方法 | {s.get("研究方法", "")} |
-| 研究模型 | {s.get("研究模型", "")} |
-| 主要發現 | {s.get("主要發現", "")} |
-| 研究貢獻 | {s.get("研究貢獻", "")} |
-| 研究限制 | {s.get("研究限制", "")} |
+{field_rows}
 """
         md_path.write_text(md_content, encoding="utf-8")
         md_written = True
 
         # 2. 寫入總表重建用的 .json
         json_data = {
-            "title": title,
-            "評分依據": summary.get("評分依據", ""),
-            "主要發現": summary.get("主要發現", ""),
+            "title":         title,
+            "scoring_basis": summary.get("scoring_basis", ""),
+            "findings":      summary.get("findings", ""),
         }
         json_path.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8")
         json_written = True
@@ -273,22 +328,7 @@ def save_results(state: PaperState) -> PaperState:
 
     except FileNotFoundError as e:
         # PDF 不存在（永久性錯誤，不重試）：rollback 已寫入的檔案
-        if json_written:
-            if old_json is not None:
-                try:
-                    json_path.write_text(old_json, encoding="utf-8")
-                except Exception:
-                    json_path.unlink(missing_ok=True)
-            else:
-                json_path.unlink(missing_ok=True)
-        if md_written:
-            if old_md is not None:
-                try:
-                    md_path.write_text(old_md, encoding="utf-8")
-                except Exception:
-                    md_path.unlink(missing_ok=True)
-            else:
-                md_path.unlink(missing_ok=True)
+        _rollback_files(md_path, old_md, md_written, json_path, old_json, json_written)
         return {
             **state,
             "failed_node": "save_results",
@@ -303,22 +343,7 @@ def save_results(state: PaperState) -> PaperState:
                 shutil.move(str(dst), str(src))
             except Exception:
                 pass
-        if json_written:
-            if old_json is not None:
-                try:
-                    json_path.write_text(old_json, encoding="utf-8")
-                except Exception:
-                    json_path.unlink(missing_ok=True)
-            else:
-                json_path.unlink(missing_ok=True)
-        if md_written:
-            if old_md is not None:
-                try:
-                    md_path.write_text(old_md, encoding="utf-8")
-                except Exception:
-                    md_path.unlink(missing_ok=True)
-            else:
-                md_path.unlink(missing_ok=True)
+        _rollback_files(md_path, old_md, md_written, json_path, old_json, json_written)
         return {
             **state,
             "failed_node": "save_results",
@@ -402,13 +427,13 @@ def route_after_save(state: PaperState) -> str:
 # ==========================================
 # 建立 Graph
 # ==========================================
-def build_graph(llm_invoke):
+def build_graph(classifier_chain_invoke, summarizer_chain_invoke):
     graph = StateGraph(PaperState)
 
     graph.add_node("init_paper", init_paper)
     graph.add_node("run_extractor", run_extractor)
-    graph.add_node("run_classifier", make_run_classifier(llm_invoke))
-    graph.add_node("run_summarizer", make_run_summarizer(llm_invoke))
+    graph.add_node("run_classifier", make_run_classifier(classifier_chain_invoke))
+    graph.add_node("run_summarizer", make_run_summarizer(summarizer_chain_invoke))
     graph.add_node("handle_permanent_error", handle_permanent_error)
     graph.add_node("handle_error", handle_error)
     graph.add_node("write_dead_letter", write_dead_letter)

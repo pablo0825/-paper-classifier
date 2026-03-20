@@ -8,14 +8,14 @@ class PaperState(TypedDict):
     current_paper: str
     # 任務識別碼，格式為「時間戳記-檔名」（例如 20260319-143022-paper_001）
     thread_id: str
-    # 從 PDF 擷取出的文字內容（最多 35,000 字）
+    # 從 PDF 擷取出的文字內容（最多 50,000 字）
     extracted_text: str
     # 分類結果，值為 A1、A2 或 A3
     classification: str
     # 符合的標準清單（例如 ["Criterion 1", "Criterion 3"]）
     criteria_met: list[str]
-    # 摘要各欄位內容（例如 {"論文標題": "...", "研究目的": "..."}）
-    summary: dict
+    # 摘要各欄位內容（例如 {"title": "...", "objective": "..."}）
+    summary: dict[str, str]
     # 本次執行已成功處理的論文數量
     processed_count: int
     # 本次執行累計的錯誤論文數量

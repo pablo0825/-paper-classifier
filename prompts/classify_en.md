@@ -36,14 +36,12 @@ The reviewer shall ensure that "Criteria Met" and "Classification" are consisten
 Output a single JSON object only. Do not include any explanation, markdown formatting, or code block wrapper.
 
 {
-"criteria": {
-"1": true,
-"2": false,
-"3": true,
-"4": true,
-"5": true,
-"6": false,
-"7": true
-},
+"criterion_1": true,
+"criterion_2": false,
+"criterion_3": true,
+"criterion_4": true,
+"criterion_5": true,
+"criterion_6": false,
+"criterion_7": true,
 "classification": "A2"
 }

@@ -6,4 +6,19 @@ venv/
 
 # Python 暫存檔
 __pycache__/
-*.pyc
+*.py[cod]
+
+# pytest 暫存
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# 資料目錄（論文與輸出結果，不屬於程式碼）
+input/
+output/
+logs/
+processed_papers.md
+error_papers.md
+error_filenames.md

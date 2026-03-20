@@ -3,15 +3,15 @@ import time
 from pathlib import Path
 from dotenv import load_dotenv
 
+# 必須在 core.orchestrator import 之前執行，否則模組層級常數（PRICE_INPUT_PER_M 等）會在 .env 載入前初始化
+load_dotenv()
+
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
 
 from core.orchestrator import build_graph, rebuild_summaries, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M
+from core.schemas import ClassifierOutput, SummarizerOutput
 from core.scan import scan_papers
 from core.state import PaperState
-
-# 載入 .env 中的 API Key
-load_dotenv()
 
 # ==========================================
 # 主程式
@@ -40,6 +40,7 @@ if __name__ == "__main__":
         OUTPUT_DIR / "A2" / "pdf", OUTPUT_DIR / "A2" / "summary", OUTPUT_DIR / "A2" / "json",
         OUTPUT_DIR / "A3" / "pdf", OUTPUT_DIR / "A3" / "summary", OUTPUT_DIR / "A3" / "json",
         ERROR_DIR,
+        WORK_DIR / "logs",
     ]:
         Path(folder).mkdir(parents=True, exist_ok=True)
 
@@ -60,21 +61,27 @@ if __name__ == "__main__":
     # 驗證通過後才初始化 LLM
     llm = ChatOpenAI(
         model=os.getenv("OPENAI_MODEL"),
-        api_key=os.getenv("OPENAI_API_KEY")
+        api_key=os.getenv("OPENAI_API_KEY"),
+        timeout=120,
     )
 
-    def invoke_with_retry(prompt, max_retries=3, wait_seconds=10):
-        for attempt in range(max_retries):
-            try:
-                return llm.invoke([HumanMessage(content=prompt)])
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    error_str = str(e).lower()
-                    wait = 60 if ("429" in error_str or "rate_limit" in error_str) else wait_seconds
-                    print(f"LLM 呼叫失敗（{e}），等待 {wait} 秒後重試...")
-                    time.sleep(wait)
-                else:
-                    raise
+    classifier_chain = llm.with_structured_output(ClassifierOutput, include_raw=True)
+    summarizer_chain = llm.with_structured_output(SummarizerOutput, include_raw=True)
+
+    def make_invoke_with_retry(chain, max_retries=3, wait_seconds=10):
+        def invoke(prompt):
+            for attempt in range(max_retries):
+                try:
+                    return chain.invoke(prompt)
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        error_str = str(e).lower()
+                        wait = 60 if ("429" in error_str or "rate_limit" in error_str) else wait_seconds
+                        print(f"LLM 呼叫失敗（{e}），等待 {wait} 秒後重試...")
+                        time.sleep(wait)
+                    else:
+                        raise
+        return invoke
 
     # 掃描待處理論文
     all_pdfs = sorted(INPUT_DIR.glob("*.pdf"))
@@ -89,7 +96,10 @@ if __name__ == "__main__":
     rebuild_summaries(OUTPUT_DIR)
 
     # 建立 graph
-    app = build_graph(invoke_with_retry)
+    app = build_graph(
+        make_invoke_with_retry(classifier_chain),
+        make_invoke_with_retry(summarizer_chain),
+    )
 
     # 初始 state
     initial_state: PaperState = {

@@ -1,6 +1,24 @@
 import shutil
 from pathlib import Path
 
+
+def _remove_orphaned_headers(lines: list[str]) -> list[str]:
+    """移除後面沒有任何條目的日期標題（## 開頭但其後至下一個標題間無 - 條目）"""
+    cleaned = []
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            has_entries = False
+            for j in range(i + 1, len(lines)):
+                if lines[j].startswith("## "):
+                    break
+                if lines[j].startswith("- "):
+                    has_entries = True
+                    break
+            if not has_entries:
+                continue
+        cleaned.append(line)
+    return cleaned
+
 # ==========================================
 # 路徑設定（以執行指令時所在的資料夾為工作目錄）
 # ==========================================
@@ -54,6 +72,7 @@ def rerun_paper(filename: str) -> bool:
         try:
             lines = LOG_FILE.read_text(encoding="utf-8").splitlines()
             new_lines = [line for line in lines if line.strip() != f"- {filename}"]
+            new_lines = _remove_orphaned_headers(new_lines)
             LOG_FILE.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         except Exception as e:
             print(f"正在處理：{filename}... 警告：無法更新 processed_papers.md（{e}），請手動確認")
@@ -62,6 +81,7 @@ def rerun_paper(filename: str) -> bool:
         try:
             lines = ERROR_FILENAMES.read_text(encoding="utf-8").splitlines()
             new_lines = [line for line in lines if line.strip() != f"- {filename}"]
+            new_lines = _remove_orphaned_headers(new_lines)
             ERROR_FILENAMES.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         except Exception as e:
             print(f"正在處理：{filename}... 警告：無法更新 error_filenames.md（{e}），請手動確認")
