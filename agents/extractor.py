@@ -9,14 +9,16 @@ def extract(state: PaperState) -> PaperState:
     current = state["current_paper"]
     pdf_path = input_dir / current
 
-    print(f"\n正在處理：{current}")
+    remaining_count = len(state["papers_to_process"])
+    print(f"\n正在處理（剩餘 {remaining_count} 篇）：{current}")
 
     # 嘗試開啟並擷取 PDF 文字
     try:
         with fitz.open(str(pdf_path)) as doc:
-            text = ""
+            parts = []
             for page in doc:
-                text += page.get_text()
+                parts.append(page.get_text())
+            text = "".join(parts)
     except fitz.FileDataError as e:
         # 永久性錯誤（損壞、加密）：回報，不重試
         return {
@@ -50,9 +52,9 @@ def extract(state: PaperState) -> PaperState:
         }
 
     # 限制字數，避免超過 LLM token 上限
-    if len(text) > 35000:
-        print(f"  ⚠️  論文文字較長（{len(text):,} 字），已截斷至 35,000 字")
-        text = text[:35000]
+    if len(text) > 50000:
+        print(f"  ⚠️  論文文字較長（{len(text):,} 字），已截斷至 50,000 字")
+        text = text[:50000]
 
     return {
         **state,
