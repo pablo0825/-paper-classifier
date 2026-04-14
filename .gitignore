@@ -22,3 +22,5 @@ logs/
 processed_papers.md
 error_papers.md
 error_filenames.md
+.spectra/
+openspec/.vector-search.db*
