@@ -36,9 +36,9 @@ if __name__ == "__main__":
     # 確保所有資料夾存在（容錯）
     for folder in [
         INPUT_DIR,
-        OUTPUT_DIR / "A1" / "pdf", OUTPUT_DIR / "A1" / "summary", OUTPUT_DIR / "A1" / "json",
-        OUTPUT_DIR / "A2" / "pdf", OUTPUT_DIR / "A2" / "summary", OUTPUT_DIR / "A2" / "json",
-        OUTPUT_DIR / "A3" / "pdf", OUTPUT_DIR / "A3" / "summary", OUTPUT_DIR / "A3" / "json",
+        OUTPUT_DIR / "A1",
+        OUTPUT_DIR / "A2",
+        OUTPUT_DIR / "A3",
         ERROR_DIR,
         WORK_DIR / "logs",
     ]:

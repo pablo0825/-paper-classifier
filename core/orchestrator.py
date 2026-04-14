@@ -64,7 +64,7 @@ def rebuild_summaries(output_dir: Path, only: str = None):
     for classification in targets:
         summary_path = output_dir / f"summary_{classification}.md"
         entries = []
-        for json_file in sorted((output_dir / classification / "json").glob("*.json")):
+        for json_file in sorted((output_dir / classification).glob("*/json/*.json")):
             try:
                 data = json.loads(json_file.read_text(encoding="utf-8"))
                 entries.append(f"""
@@ -267,10 +267,12 @@ def save_results(state: PaperState) -> PaperState:
     stem = Path(current).stem
     cls_folder = classification if classification in ["A1", "A2", "A3"] else "A3"
 
+    today = date.today().strftime("%Y-%m-%d")
+
     src = input_dir / current
-    dst = output_dir / cls_folder / "pdf" / current
-    md_path = output_dir / cls_folder / "summary" / (stem + ".md")
-    json_path = output_dir / cls_folder / "json" / (stem + ".json")
+    dst = output_dir / cls_folder / today / "pdf" / current
+    md_path = output_dir / cls_folder / today / "summary" / (stem + ".md")
+    json_path = output_dir / cls_folder / today / "json" / (stem + ".json")
 
     md_written = False
     json_written = False
@@ -289,6 +291,7 @@ def save_results(state: PaperState) -> PaperState:
     try:
         # 確保目錄存在，避免 write_text 因目錄不存在而丟出 FileNotFoundError
         # 讓 FileNotFoundError 只剩 shutil.move（PDF 遺失）能觸發，語意精確
+        dst.parent.mkdir(parents=True, exist_ok=True)
         md_path.parent.mkdir(parents=True, exist_ok=True)
         json_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -351,21 +354,27 @@ def save_results(state: PaperState) -> PaperState:
             "permanent_error": False,
         }
 
-    # 成功：清除其他分類資料夾中的同名舊檔案（當前分類已由 write_text 覆蓋）
+    # 成功：清除所有分類資料夾中所有日期子資料夾的同名舊檔案（當前 cls_folder/today/ 除外）
     affected_cls = set()
     for cls in ["A1", "A2", "A3"]:
-        if cls == cls_folder:
+        cls_dir = output_dir / cls
+        if not cls_dir.exists():
             continue
-        for old_file in [
-            output_dir / cls / "summary" / f"{stem}.md",
-            output_dir / cls / "json" / f"{stem}.json",
-        ]:
-            if old_file.exists():
-                try:
-                    old_file.unlink()
-                    affected_cls.add(cls)
-                except Exception as e:
-                    print(f"警告：無法刪除舊檔 {old_file.name}（{e}），繼續執行")
+        for date_dir in cls_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            if cls == cls_folder and date_dir.name == today:
+                continue
+            for old_file in [
+                date_dir / "summary" / f"{stem}.md",
+                date_dir / "json" / f"{stem}.json",
+            ]:
+                if old_file.exists():
+                    try:
+                        old_file.unlink()
+                        affected_cls.add(cls)
+                    except Exception as e:
+                        print(f"警告：無法刪除舊檔 {old_file.name}（{e}），繼續執行")
 
     remaining = state["papers_to_process"][1:]
     count = state["processed_count"] + 1

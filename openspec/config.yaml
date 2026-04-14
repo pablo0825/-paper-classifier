@@ -1,5 +1,9 @@
 schema: spec-driven
 
+context: |
+  專案類型: 學術論文自動分類與摘要系統，批次處理學術論文 PDF，使用 LangGraph 驅動 AI 工作流程，自動分類並生成結構化摘要。
+  技術棧: Python 3.12 · LangGraph 1.1.2 · LangChain OpenAI 1.1.11 · PyMuPDF 1.27.2 · Pydantic 2.12.5 · python-dotenv 1.2.2 · pytest 9.0.2 · GitHub Actions
+
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.

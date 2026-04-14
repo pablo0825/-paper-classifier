@@ -53,15 +53,9 @@ if __name__ == "__main__":
     # 建立資料夾結構
     folders = [
         WORK_DIR / "input",
-        WORK_DIR / "output" / "A1" / "pdf",
-        WORK_DIR / "output" / "A1" / "summary",
-        WORK_DIR / "output" / "A1" / "json",
-        WORK_DIR / "output" / "A2" / "pdf",
-        WORK_DIR / "output" / "A2" / "summary",
-        WORK_DIR / "output" / "A2" / "json",
-        WORK_DIR / "output" / "A3" / "pdf",
-        WORK_DIR / "output" / "A3" / "summary",
-        WORK_DIR / "output" / "A3" / "json",
+        WORK_DIR / "output" / "A1",
+        WORK_DIR / "output" / "A2",
+        WORK_DIR / "output" / "A3",
         WORK_DIR / "output" / "error",
         WORK_DIR / "logs",
     ]
