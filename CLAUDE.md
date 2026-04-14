@@ -26,17 +26,78 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 <!-- SPECTRA:END -->
 
+## 專案概覽
+
+**學術論文自動分類與摘要系統** — 批次處理學術論文 PDF，使用 LangGraph 驅動 AI 工作流程，自動分類（A1/A2/A3）並生成結構化摘要。
+
+### 技術棧
+
+| 類別 | 技術 |
+|------|------|
+| 語言 | Python 3.12 |
+| LLM 框架 | LangGraph 1.1.2 |
+| LLM 提供者 | OpenAI API（gpt-5.3-chat-latest） |
+| PDF 解析 | PyMuPDF (fitz) |
+| 測試 | pytest + GitHub Actions CI |
+
+### 目錄結構
+
+```
+main.py               主程式入口
+core/
+  orchestrator.py     LangGraph graph 構建與路由
+  state.py            PaperState TypedDict 定義
+  scan.py             掃描 input/ 找出未處理 PDF
+agents/
+  extractor.py        PDF 文字提取
+  classifier.py       論文分類（7 項標準 → A1/A2/A3）
+  summarizer.py       生成結構化摘要（10 個欄位）
+prompts/
+  classify_en.md      分類 prompt（當前使用）
+  summarize_en.md     摘要 prompt（當前使用）
+tools/
+  init.py             初始化工作目錄與 .env
+  list_papers.py      查看已處理/錯誤紀錄
+  rerun.py            重新處理指定論文
+docs/
+  design.md           設計決策紀錄
+openspec/             Spectra 規格與變更提案
+```
+
+### 執行方式
+
+```bash
+# 初始化（第一次）
+python tools/init.py
+
+# 主程式
+python main.py
+
+# 查看紀錄 / 重跑論文
+python tools/list_papers.py
+python tools/rerun.py
+```
+
+Windows 可用 `pa-start.bat` 啟動 venv 並設定 `pa-run`、`pa-list`、`pa-init`、`pa-redo` 等快捷指令。
+
+### 關鍵慣例
+
+- **Prompt 以檔案管理**：分類與摘要 prompt 存放於 `prompts/`，調整標準不需動程式碼
+- **增量處理**：`processed_papers.md` 記錄已完成論文，`error_filenames.md` 記錄永久性錯誤
+- **輸出結構**：每篇論文產出 `.md` 和 `.json`，按分類存入 `output/A1/A2/A3/`
+- **環境設定**：API Key 與模型選擇存於 `.env`（不上傳）
+
+---
+
 ## Commit Message 規範
 
-依文章生命週期使用對應的 prefix：
-
-| 階段 | 格式 | 說明 |
-|------|------|------|
-| 草稿 | `draft: 文章標題` | 第一次建立或初稿寫入 |
-| 定稿 | `final: 文章標題` | 討論完成、準備發布 |
-| 發布 | `publish: 文章標題` | 已發布到 Medium |
-| 修改 | `revise: 文章標題` | 發布後的內容更動 |
-| 維護 | `chore: 說明` | 專案設定、規範或非文章檔案的變更 |
+| Prefix | 用途 |
+|--------|------|
+| `feat:` | 新功能 |
+| `fix:` | 修復 Bug |
+| `refactor:` | 重構（無功能變更） |
+| `test:` | 測試相關修改 |
+| `docs:` | 文件更新 |
 
 commit 訊息的說明一律使用**繁體中文**。
 
